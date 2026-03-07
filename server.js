@@ -6,31 +6,33 @@ import OpenAI from "openai";
 // Load environment variables
 dotenv.config();
 
-// Check API key
-const apiKey = process.env.OPENAI_API_KEY;
-
-if (!apiKey) {
-  console.error("❌ OPENAI_API_KEY is missing.");
-  process.exit(1);
-}
-
-// Initialize OpenAI
-const openai = new OpenAI({
-  apiKey,
-});
-
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Test route
+// Check API key once
+const apiKey = process.env.OPENAI_API_KEY;
+
+// Only create OpenAI client if key exists
+const openai = apiKey ? new OpenAI({ apiKey }) : null;
+
+// Health route
 app.get("/", (req, res) => {
-  res.json({ message: "Backend is running 🚀" });
+  res.json({
+    message: "Backend is running 🚀",
+    openaiConfigured: !!apiKey,
+  });
 });
 
 // Analyzer route
 app.post("/analyze", async (req, res) => {
   try {
+    if (!openai) {
+      return res.status(500).json({
+        error: "OPENAI_API_KEY is missing on server",
+      });
+    }
+
     const { message, relationshipStatus } = req.body;
 
     if (!message) {
@@ -91,20 +93,8 @@ Detect patterns such as:
 Rules for output:
 
 The "signal" should be a short, clear explanation that a woman can easily understand.
-
-The "risk_level" must be:
-low, medium, or high.
-
-The "suggested_reply" must always be:
-
-• calm
-• feminine
-• confident
-• emotionally intelligent
-• boundary-respecting
-• never aggressive
-• never desperate
-• never rude
+The "risk_level" must be: low, medium, or high.
+The "suggested_reply" must always be calm, feminine, confident, emotionally intelligent, boundary-respecting, never aggressive, never desperate, and never rude.
 
 If the message shows disrespect, pressure, manipulation, or unclear intention, suggest a graceful response that protects the woman's standards and boundaries.
           `,
@@ -117,7 +107,6 @@ If the message shows disrespect, pressure, manipulation, or unclear intention, s
     });
 
     const result = JSON.parse(completion.choices[0].message.content);
-
     res.json(result);
   } catch (error) {
     console.error("❌ Analyzer Error:", error);
@@ -128,6 +117,12 @@ If the message shows disrespect, pressure, manipulation, or unclear intention, s
 // Chat route
 app.post("/chat", async (req, res) => {
   try {
+    if (!openai) {
+      return res.status(500).json({
+        error: "OPENAI_API_KEY is missing on server",
+      });
+    }
+
     const { message, relationship } = req.body;
 
     if (!message) {
