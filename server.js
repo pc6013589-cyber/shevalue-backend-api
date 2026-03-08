@@ -3,20 +3,20 @@ import cors from "cors";
 import dotenv from "dotenv";
 import OpenAI from "openai";
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
-// Check API key once
 const apiKey = process.env.OPENAI_API_KEY;
-
-// Only create OpenAI client if key exists
 const openai = apiKey ? new OpenAI({ apiKey }) : null;
 
-// Health route
+app.use((req, res, next) => {
+  console.log(`➡️ ${req.method} ${req.path}`);
+  next();
+});
+
 app.get("/", (req, res) => {
   res.json({
     message: "Backend is running 🚀",
@@ -24,7 +24,15 @@ app.get("/", (req, res) => {
   });
 });
 
-// Analyzer route
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("OpenAI request timed out")), ms)
+    ),
+  ]);
+}
+
 app.post("/analyze", async (req, res) => {
   try {
     if (!openai) {
@@ -39,13 +47,15 @@ app.post("/analyze", async (req, res) => {
       return res.status(400).json({ error: "Message is required" });
     }
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: `
+    console.log("🧠 Analyze request received");
+
+    const response = await withTimeout(
+      openai.responses.create({
+        model: "gpt-4o-mini",
+        input: [
+          {
+            role: "system",
+            content: `
 You are SheValue Analyzer, an emotionally intelligent relationship message analyst for women.
 
 Return JSON only in this exact format:
@@ -60,61 +70,72 @@ Return JSON only in this exact format:
 Consider relationship type: ${relationshipStatus || "Unknown"}
 
 Evaluate the message based on:
-
-• Respect
-• Emotional maturity
-• Clarity of intention
-• Effort and seriousness
-• Consistency
-• Boundary awareness
-• Feminine value alignment
+- Respect
+- Emotional maturity
+- Clarity of intention
+- Effort and seriousness
+- Consistency
+- Boundary awareness
+- Feminine value alignment
 
 Scoring Guide:
-
-0-20 → highly disrespectful, manipulative, unsafe, sexual pressure, or extremely low effort
-21-40 → low effort, unclear intentions, emotionally immature behaviour
-41-60 → mixed signals, inconsistent effort, unclear direction
-61-80 → decent but not fully intentional or emotionally clear
-81-100 → respectful, clear, emotionally mature and intentional communication
+0-20 = highly disrespectful, manipulative, unsafe, sexual pressure, or extremely low effort
+21-40 = low effort, unclear intentions, emotionally immature behaviour
+41-60 = mixed signals, inconsistent effort, unclear direction
+61-80 = decent but not fully intentional or emotionally clear
+81-100 = respectful, clear, emotionally mature and intentional communication
 
 Detect patterns such as:
+- sexual pressure
+- manipulation
+- breadcrumbing
+- love bombing
+- low effort communication
+- emotionally unavailable behaviour
+- vague invitations
+- disrespect for boundaries
+- situationship energy
+- controlling language
 
-• sexual pressure
-• manipulation
-• breadcrumbing
-• love bombing
-• low effort communication
-• emotionally unavailable behaviour
-• vague invitations
-• disrespect for boundaries
-• situationship energy
-• controlling language
+The "signal" should be short and easy to understand.
+The "risk_level" must be low, medium, or high.
+The "suggested_reply" must be calm, feminine, confident, emotionally intelligent, boundary-respecting, never aggressive, never desperate, and never rude.
+            `,
+          },
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+      }),
+      25000
+    );
 
-Rules for output:
+    const content = response.output_text;
 
-The "signal" should be a short, clear explanation that a woman can easily understand.
-The "risk_level" must be: low, medium, or high.
-The "suggested_reply" must always be calm, feminine, confident, emotionally intelligent, boundary-respecting, never aggressive, never desperate, and never rude.
+    if (!content) {
+      console.error("❌ Analyzer returned empty content");
+      return res.status(500).json({ error: "Analyzer returned empty content" });
+    }
 
-If the message shows disrespect, pressure, manipulation, or unclear intention, suggest a graceful response that protects the woman's standards and boundaries.
-          `,
-        },
-        {
-          role: "user",
-          content: message,
-        },
-      ],
-    });
+    let result;
+    try {
+      result = JSON.parse(content);
+    } catch (parseError) {
+      console.error("❌ Failed to parse analyzer JSON:", content);
+      return res.status(500).json({ error: "Analyzer returned invalid JSON" });
+    }
 
-    const result = JSON.parse(completion.choices[0].message.content);
+    console.log("✅ Analyze success");
     res.json(result);
   } catch (error) {
     console.error("❌ Analyzer Error:", error);
-    res.status(500).json({ error: "Analyzer failed" });
+    res.status(500).json({
+      error: error.message || "Analyzer failed",
+    });
   }
 });
 
-// Chat route
 app.post("/chat", async (req, res) => {
   try {
     if (!openai) {
@@ -129,23 +150,39 @@ app.post("/chat", async (req, res) => {
       return res.status(400).json({ error: "Message is required" });
     }
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are SheValue Therapist, a calm, emotionally intelligent, supportive feminine relationship therapist. Relationship status: ${relationship || "Unknown"}.`,
-        },
-        { role: "user", content: message },
-      ],
-    });
+    console.log("💬 Chat request received");
 
-    res.json({
-      reply: completion.choices[0].message.content,
-    });
+    const response = await withTimeout(
+      openai.responses.create({
+        model: "gpt-4o-mini",
+        input: [
+          {
+            role: "system",
+            content: `You are SheValue Therapist, a calm, emotionally intelligent, supportive feminine relationship therapist. Relationship status: ${relationship || "Unknown"}.`,
+          },
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+      }),
+      25000
+    );
+
+    const reply = response.output_text;
+
+    if (!reply) {
+      console.error("❌ Chat returned empty reply");
+      return res.status(500).json({ error: "Chat returned empty reply" });
+    }
+
+    console.log("✅ Chat success");
+    res.json({ reply });
   } catch (error) {
-    console.error("❌ OpenAI Error:", error);
-    res.status(500).json({ error: "Something went wrong." });
+    console.error("❌ Chat Error:", error);
+    res.status(500).json({
+      error: error.message || "Something went wrong.",
+    });
   }
 });
 
